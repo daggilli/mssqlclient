@@ -1,0 +1,13 @@
+---
+Language:        Cpp
+BasedOnStyle:  Google
+
+ColumnLimit:     130
+IndentCaseLabels: true
+IndentWidth:     2
+IndentWrappedFunctionNames: true
+MaxEmptyLinesToKeep: 1
+NamespaceIndentation: All
+TabWidth:        2
+UseTab:          Never
+FixNamespaceComments: true
