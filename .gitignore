@@ -1,4 +1,6 @@
 mssqlclient
+mssqltest
 *.o
 *.d
 .vscode
+dbconfig.json
