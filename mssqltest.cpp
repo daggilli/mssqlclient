@@ -25,8 +25,8 @@ namespace fs = std::filesystem;
 using json = nlohmann::json;
 
 const std::string qstr = "SELECT CAST(1.9 AS FLOAT) AS flt, 'yay' as yay, CURRENT_TIMESTAMP AS n;";
-const std::string testqstr = "SELECT Id, Value FROM Test ORDER BY Id;";
-
+const std::string testqstr = "SELECT Id, Value FROM dbo.Test ORDER BY Id;";
+const std::string eventqstr = "SELECT Id, Name, EventTime FROM dbo.Events ORDER BY EventTime;";
 std::string dateParse(const DBDATEREC &dateRecord);
 std::uintmax_t loadFile(const char *const name, std::string &fileStr);
 MSSQLClient::DatabaseConfig getDatabaseConfiguration(const std::string &configFile);
@@ -49,32 +49,27 @@ int main(int argc, char *argv[]) {
 
   std::cout << "ROWS " << result.size() << '\n';
 
-  // DBDATEREC dateRecord;
-
   for (auto &r : result) {
     std::cout << r[0].get<int>() << ": " << r[1].get<std::string>() << "\n";
-    /* dbdatecrack(nullptr, &dateRecord, const_cast<DBDATETIME *>(&(r[2].get<DBDATETIME>())));
-    std::cout << r[0].get<double>() << " " << r[1].get<std::string>() << " " << dateParse(dateRecord) << "\n";*/
   }
 
-#if 0
-  result = connection.query(statsqstr, {INTBIND, NTBSTRINGBIND, DATETIMEBIND});
+  result = connection.query(eventqstr);
 
-  std::cout << "ROWS " << result.size() << '\n';
+  DBDATEREC dateRecord;
 
   for (auto &r : result) {
     dbdatecrack(nullptr, &dateRecord, const_cast<DBDATETIME *>(&(r[2].get<DBDATETIME>())));
-    std::cout << r[0].get<int>() << " " << r[1].get<std::string>() << " " << dateParse(dateRecord) << "\n";
+    std::cout << r[0].get<int>() << ": " << r[1].get<std::string>() << " | " << dateParse(dateRecord) << "\n";
   }
 
   const std::size_t PNBUFSIZE = 100;
 
-  int timeInterval = 10;
-  int evtCnt = 0;
+  int inputParameter = 1000;
+  int maxEvent = 0;
   auto procNameBuf = std::make_unique<char[]>(PNBUFSIZE + 1);
 
-  MSSQLClient::ParameterList params = {{"@timeInterval", SYBINT4, -1, false, reinterpret_cast<BYTE *>(&timeInterval)},
-                                       {"@EventCount", SYBINT4, -1, true, reinterpret_cast<BYTE *>(&evtCnt)},
+  MSSQLClient::ParameterList params = {{"@InputParameter", SYBINT4, -1, false, reinterpret_cast<BYTE *>(&inputParameter)},
+                                       {"@MaxEvent", SYBINT4, -1, true, reinterpret_cast<BYTE *>(&maxEvent)},
                                        {"@ProcName", SYBVARCHAR, PNBUFSIZE, true, reinterpret_cast<BYTE *>(procNameBuf.get())}};
 
   MSSQLClient::ProcedureResult procResult = connection.procedure("TestProcedure", params, {NTBSTRINGBIND});
@@ -87,7 +82,10 @@ int main(int argc, char *argv[]) {
   for (auto &r : procResult.recordSet) {
     std::cout << r[0].get<std::string>() << '\n';
   }
-#endif
+
+  if (procResult.procedureReturnValue.has_value()) {
+    std::cout << "Procedure returned " << procResult.procedureReturnValue.value() << '\n';
+  }
 
   return 0;
 }

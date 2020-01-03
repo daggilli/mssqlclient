@@ -64,6 +64,7 @@ namespace MSSQLClient {
   using ProcedureResult = struct {
     RecordSet recordSet;
     ReturnValueMap returnValues;
+    std::optional<DBINT> procedureReturnValue;
   };
 
   namespace {
@@ -75,8 +76,6 @@ namespace MSSQLClient {
    public:
     Column(DBPROCESS *dbproc, const int col, const int colType)
         : nm(dbcolname(dbproc, col)), tp(dbcoltype(dbproc, col)), dtp(colType), sz(dbcollen(dbproc, col)) {
-      std::cout << "SZ: " << sz << "\n";
-
       buf = std::make_unique<char[]>(sz + 1);
 
       if (dtp == -1) {
@@ -181,7 +180,6 @@ namespace MSSQLClient {
 
     RecordSet query(const char *queryString, const std::vector<int> &expectedTypes = {}) {
       try {
-        std::cout << queryString << '\n';
         if (dbproc == nullptr && DBISAVAIL(dbproc)) {
           throw(std::runtime_error("Datanase process invalid"));
         }
@@ -223,17 +221,7 @@ namespace MSSQLClient {
 
         ProcedureResult procResult = {getResultRows(expectedTypes), ReturnValueMap()};
 
-        RETCODE retCode;
-        while ((retCode = dbresults(dbproc)) != NO_MORE_RESULTS) {
-          if (retCode == FAIL) {
-            throw(std::runtime_error("dbresults failed.\n"));
-          }
-          /* Print any rows that may have been returned. */
-          dbprrow(dbproc);
-        }
-
         int numrets = dbnumrets(dbproc);
-        std::cout << numrets << " return values received.\n";
 
         for (auto i = 1; i <= numrets; i++) {
           auto retType = dbrettype(dbproc, i);
@@ -253,6 +241,12 @@ namespace MSSQLClient {
           }
 
           procResult.returnValues[returnName] = std::move(it);
+        }
+
+        procResult.procedureReturnValue = std::nullopt;
+
+        if (dbhasretstat(dbproc) == TRUE) {
+          procResult.procedureReturnValue = dbretstatus(dbproc);
         }
 
         return procResult;
@@ -283,8 +277,6 @@ namespace MSSQLClient {
           std::size_t ncols;
 
           ncols = static_cast<std::size_t>(dbnumcols(dbproc));
-
-          std::cout << "NCOLS " << ncols << '\n';
 
           if (useExpectedTypes && ncols != expectedTypes.size()) {
             std::ostringstream err;
@@ -365,14 +357,10 @@ namespace MSSQLClient {
               }
 
               default: {
-                std::cout << "Ignore row code " << rowCode << '\n';
+                std::cerr << "Ignore row code " << rowCode << '\n';
                 break;
               }
             }
-          }
-
-          if (dbhasretstat(dbproc) == TRUE) {
-            std::cout << "Procedure returned " << dbretstatus(dbproc) << '\n';
           }
         }
         return result;
