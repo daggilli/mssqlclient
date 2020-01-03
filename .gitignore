@@ -1,0 +1,4 @@
+mssqlclient
+*.o
+*.d
+.vscode
