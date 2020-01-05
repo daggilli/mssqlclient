@@ -310,7 +310,7 @@ namespace MSSQLClient {
                       }
 
                       case TINYBIND: {
-                        it = static_cast<uint8_t>(buf[0] && 0xFF);
+                        it = static_cast<uint8_t>(buf[0] & 0xFF);
                         break;
                       }
 
