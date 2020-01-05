@@ -101,7 +101,7 @@ namespace MSSQLClient {
           buf(std::move(col.buf)),
           tp(std::exchange(col.tp, 0)),
           sz(std::exchange(col.sz, 0)),
-          st(std::exchange(col.sz, 0)) {}
+          st(std::exchange(col.st, 0)) {}
     ~Column() {}
 
     const std::string &name() const { return nm; }
