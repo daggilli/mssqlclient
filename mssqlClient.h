@@ -1,5 +1,6 @@
 #ifndef __MSSQLCLIENT_H__
 #define __MSSQLCLIENT_H__
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
@@ -118,7 +119,7 @@ namespace MSSQLClient {
     int dtp;
     int sz;
     int st;
-  };
+  };  // class Column
 
   using ColumnSet = typename std::vector<Column>;
 
@@ -131,7 +132,7 @@ namespace MSSQLClient {
     Connection(const DatabaseConfig &config, MessageHandler msgHandler = nullptr, ErrorHandler errHandler = nullptr)
         : dbproc(nullptr) {
       try {
-        if (dbinit() == FAIL) {
+        if (!refCnt++ && dbinit() == FAIL) {
           throw(std::runtime_error("dbinit() failed'"));
         }
 
@@ -171,7 +172,7 @@ namespace MSSQLClient {
     Connection(const Connection &conn) = delete;
     ~Connection() {
       close();
-      dbexit();
+      if (!--refCnt) dbexit();
     }
 
     RecordSet query(const std::string &queryString, const std::vector<int> &expectedTypes = {}) {
@@ -261,6 +262,8 @@ namespace MSSQLClient {
         dbproc = nullptr;
       }
     }
+
+    static const uint32_t refCount() { return Connection::refCnt.load(); }
 
    private:
     RecordSet getResultRows(const std::vector<int> &expectedTypes) {
@@ -386,7 +389,8 @@ namespace MSSQLClient {
     }
 
     DBPROCESS *dbproc;
-  };  // namespace MSSQLClient
+    inline static std::atomic_uint32_t refCnt = 0;
+  };  // class Connnection
 }  // namespace MSSQLClient
 
 #endif
