@@ -3,4 +3,5 @@ mssqltest
 *.o
 *.d
 .vscode
-dbconfig.json
+*config.json
+commands.sql
