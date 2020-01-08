@@ -30,7 +30,8 @@ namespace MSSQLClient {
     std::string database;
   };
 
-  using TypeValue = std::variant<int, uint8_t, uint16_t, float, double, std::string, DBDATETIME>;
+  using TypeValue = std::variant<int8_t, int16_t, int32_t, int64_t, uint8_t, uint16_t, uint32_t, uint64_t, float, double,
+                                 std::string, DBDATETIME>;
   using ItemValue = std::optional<TypeValue>;
 
   class Item {
@@ -220,35 +221,9 @@ namespace MSSQLClient {
           throw(std::runtime_error("dbsqlok failed.\n"));
         }
 
-        ProcedureResult procResult = {getResultRows(expectedTypes), ReturnValueMap()};
+        ProcedureResult procResult = {getResultRows(expectedTypes)};
 
-        int numrets = dbnumrets(dbproc);
-
-        for (auto i = 1; i <= numrets; i++) {
-          auto retType = dbrettype(dbproc, i);
-          std::string returnName(dbretname(dbproc, i));
-          TypeValue it;
-
-          switch (retType) {
-            case SYBINT4: {
-              it = *(reinterpret_cast<int *>(dbretdata(dbproc, i)));
-              break;
-            }
-
-            case SYBVARCHAR: {
-              it = std::string(reinterpret_cast<char *>(dbretdata(dbproc, i)), dbretlen(dbproc, i));
-              break;
-            }
-          }
-
-          procResult.returnValues[returnName] = std::move(it);
-        }
-
-        procResult.procedureReturnValue = std::nullopt;
-
-        if (dbhasretstat(dbproc) == TRUE) {
-          procResult.procedureReturnValue = dbretstatus(dbproc);
-        }
+        getReturnValues(procResult);
 
         return procResult;
       } catch (...) {
@@ -370,6 +345,65 @@ namespace MSSQLClient {
       } catch (...) {
         std::throw_with_nested(std::runtime_error("getResultRows() failed"));
       }
+    }
+
+    int getReturnValues(ProcedureResult &procResult) {
+      int numrets = dbnumrets(dbproc);
+
+      for (auto i = 1; i <= numrets; i++) {
+        auto retType = dbrettype(dbproc, i);
+        std::string returnName(dbretname(dbproc, i));
+        TypeValue it;
+
+        BYTE *returnDataPtr = dbretdata(dbproc, i);
+
+        switch (retType) {
+          case SYBINT1: {
+            it = *(reinterpret_cast<int8_t *>(returnDataPtr));
+            break;
+          }
+
+          case SYBINT2: {
+            it = *(reinterpret_cast<int16_t *>(returnDataPtr));
+            break;
+          }
+
+          case SYBINT4: {
+            it = *(reinterpret_cast<int32_t *>(returnDataPtr));
+            break;
+          }
+
+          case SYBINT8: {
+            it = *(reinterpret_cast<int64_t *>(returnDataPtr));
+            break;
+          }
+
+          case SYBFLT8: {
+            it = *(reinterpret_cast<double *>(returnDataPtr));
+            break;
+          }
+
+          case SYBVARCHAR: {
+            it = std::string(reinterpret_cast<char *>(returnDataPtr), dbretlen(dbproc, i));
+            break;
+          }
+
+          case SYBDATETIME: {
+            it = *(reinterpret_cast<const DBDATETIME *>(returnDataPtr));
+            break;
+          }
+        }
+
+        procResult.returnValues[returnName] = std::move(it);
+      }
+
+      procResult.procedureReturnValue = std::nullopt;
+
+      if (dbhasretstat(dbproc) == TRUE) {
+        procResult.procedureReturnValue = dbretstatus(dbproc);
+      }
+
+      return numrets;
     }
 
     RETCODE addParameter(const Param &p) {
