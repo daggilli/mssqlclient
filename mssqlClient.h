@@ -316,14 +316,7 @@ namespace MSSQLClient {
                         it = *(reinterpret_cast<const DBDATETIME *>(buf));
                         break;
                       }
-
-                      default: {
-                        it = std::nullopt;
-                        break;
-                      }
                     }
-                  } else {
-                    it = std::nullopt;
                   }
                   row.emplace_back(c.type(), it);
                 }
