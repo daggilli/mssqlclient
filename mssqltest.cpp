@@ -29,6 +29,7 @@ const std::string testqstr = "SELECT Id, Value FROM dbo.Test ORDER BY Id;";
 const std::string eventqstr = "SELECT Id, Name, EventTime FROM dbo.Events ORDER BY EventTime;";
 std::string dateParse(const DBDATEREC &dateRecord);
 std::uintmax_t loadFile(const char *const name, std::string &fileStr);
+std::size_t loadFileByLines(const char *const name, std::vector<std::string> &lineVec);
 MSSQLClient::DatabaseConfig getDatabaseConfiguration(const std::string &configFile);
 
 int msgHandler(DBPROCESS *dbproc, DBINT msgno, int msgstate, int severity, char *msgtext, char *srvname, char *procname,
@@ -37,11 +38,6 @@ int errHandler(DBPROCESS *dbproc, int severity, int dberr, int oserr, char *dber
 
 int main(int argc, char *argv[]) {
   std::string configStr;
-
-  loadFile("./dbconfig.json", configStr);
-  std::cout << configStr << "\n";
-  auto dbConfig = json::parse(configStr);
-  std::cout << dbConfig << "\n";
 
   MSSQLClient::Connection connection(getDatabaseConfiguration("./dbconfig.json"), msgHandler, errHandler);
 
@@ -71,6 +67,22 @@ int main(int argc, char *argv[]) {
   MSSQLClient::ParameterList params = {{"@InputParameter", SYBINT4, -1, false, reinterpret_cast<BYTE *>(&inputParameter)},
                                        {"@MaxEvent", SYBINT4, -1, true, reinterpret_cast<BYTE *>(&maxEvent)},
                                        {"@ProcName", SYBVARCHAR, PNBUFSIZE, true, reinterpret_cast<BYTE *>(procNameBuf.get())}};
+
+  {
+    std::cout << "NEST\n";
+
+    MSSQLClient::Connection conn(getDatabaseConfiguration("./db2config.json"), msgHandler, errHandler);
+
+    std::vector<std::string> sqlCmds;
+
+    loadFileByLines("./commands.sql", sqlCmds);
+
+    MSSQLClient::RecordSet rs = conn.query(sqlCmds[0]);
+
+    std::cout << rs.size() << "\n";
+
+    std::cout << rs[0][0].get<int>() << "\n";
+  }
 
   MSSQLClient::ProcedureResult procResult = connection.procedure("TestProcedure", params, {NTBSTRINGBIND});
 
@@ -138,7 +150,6 @@ std::string dateParse(const DBDATEREC &dateRecord) {
 }
 
 std::uintmax_t loadFile(const char *const name, std::string &fileStr) {
-  std::cout << "Loading " << name << "\n";
   fs::path filepath(fs::absolute(fs::path(name)));
 
   std::uintmax_t fsize;
@@ -149,7 +160,6 @@ std::uintmax_t loadFile(const char *const name, std::string &fileStr) {
     std::throw_with_nested(std::invalid_argument("File not found: " + filepath.string()));
   }
 
-  std::cout << "Loading " << filepath.string() << "\n";
   std::ifstream infile;
   infile.exceptions(std::ifstream::failbit | std::ifstream::badbit);
   try {
@@ -170,6 +180,21 @@ std::uintmax_t loadFile(const char *const name, std::string &fileStr) {
   infile.close();
 
   return fsize;
+}
+
+std::size_t loadFileByLines(const char *const name, std::vector<std::string> &lineVec) {
+  std::string sqlStr;
+
+  loadFile(name, sqlStr);
+
+  std::istringstream istr(sqlStr);
+
+  std::string line;
+  while (std::getline(istr, line)) {
+    lineVec.emplace_back(std::move(line));
+  }
+
+  return lineVec.size();
 }
 
 MSSQLClient::DatabaseConfig getDatabaseConfiguration(const std::string &configFile) {

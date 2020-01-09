@@ -1,5 +1,6 @@
 #ifndef __MSSQLCLIENT_H__
 #define __MSSQLCLIENT_H__
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
@@ -29,7 +30,8 @@ namespace MSSQLClient {
     std::string database;
   };
 
-  using TypeValue = std::variant<int, uint8_t, uint16_t, float, double, std::string, DBDATETIME>;
+  using TypeValue = std::variant<int8_t, int16_t, int32_t, int64_t, uint8_t, uint16_t, uint32_t, uint64_t, float, double,
+                                 std::string, DBDATETIME>;
   using ItemValue = std::optional<TypeValue>;
 
   class Item {
@@ -118,7 +120,7 @@ namespace MSSQLClient {
     int dtp;
     int sz;
     int st;
-  };
+  };  // class Column
 
   using ColumnSet = typename std::vector<Column>;
 
@@ -131,7 +133,7 @@ namespace MSSQLClient {
     Connection(const DatabaseConfig &config, MessageHandler msgHandler = nullptr, ErrorHandler errHandler = nullptr)
         : dbproc(nullptr) {
       try {
-        if (dbinit() == FAIL) {
+        if (!refCnt++ && dbinit() == FAIL) {
           throw(std::runtime_error("dbinit() failed'"));
         }
 
@@ -171,7 +173,7 @@ namespace MSSQLClient {
     Connection(const Connection &conn) = delete;
     ~Connection() {
       close();
-      dbexit();
+      if (!--refCnt) dbexit();
     }
 
     RecordSet query(const std::string &queryString, const std::vector<int> &expectedTypes = {}) {
@@ -219,35 +221,9 @@ namespace MSSQLClient {
           throw(std::runtime_error("dbsqlok failed.\n"));
         }
 
-        ProcedureResult procResult = {getResultRows(expectedTypes), ReturnValueMap()};
+        ProcedureResult procResult = {getResultRows(expectedTypes)};
 
-        int numrets = dbnumrets(dbproc);
-
-        for (auto i = 1; i <= numrets; i++) {
-          auto retType = dbrettype(dbproc, i);
-          std::string returnName(dbretname(dbproc, i));
-          TypeValue it;
-
-          switch (retType) {
-            case SYBINT4: {
-              it = *(reinterpret_cast<int *>(dbretdata(dbproc, i)));
-              break;
-            }
-
-            case SYBVARCHAR: {
-              it = std::string(reinterpret_cast<char *>(dbretdata(dbproc, i)), dbretlen(dbproc, i));
-              break;
-            }
-          }
-
-          procResult.returnValues[returnName] = std::move(it);
-        }
-
-        procResult.procedureReturnValue = std::nullopt;
-
-        if (dbhasretstat(dbproc) == TRUE) {
-          procResult.procedureReturnValue = dbretstatus(dbproc);
-        }
+        getReturnValues(procResult);
 
         return procResult;
       } catch (...) {
@@ -261,6 +237,8 @@ namespace MSSQLClient {
         dbproc = nullptr;
       }
     }
+
+    static const uint32_t refCount() { return Connection::refCnt.load(); }
 
    private:
     RecordSet getResultRows(const std::vector<int> &expectedTypes) {
@@ -305,17 +283,17 @@ namespace MSSQLClient {
                   if (buf) {
                     switch (c.dataType()) {
                       case INTBIND: {
-                        it = *(reinterpret_cast<const int *>(buf));
+                        it = *(reinterpret_cast<const int32_t *>(buf));
                         break;
                       }
 
                       case TINYBIND: {
-                        it = static_cast<uint8_t>(buf[0] && 0xFF);
+                        it = static_cast<uint8_t>(buf[0] & 0xFF);
                         break;
                       }
 
                       case SMALLBIND: {
-                        it = *(reinterpret_cast<const uint16_t *>(buf));
+                        it = *(reinterpret_cast<const int16_t *>(buf));
                         break;
                       }
 
@@ -339,8 +317,6 @@ namespace MSSQLClient {
                         break;
                       }
                     }
-                  } else {
-                    it = std::nullopt;
                   }
                   row.emplace_back(c.type(), it);
                 }
@@ -369,6 +345,65 @@ namespace MSSQLClient {
       }
     }
 
+    int getReturnValues(ProcedureResult &procResult) {
+      int numrets = dbnumrets(dbproc);
+
+      for (auto i = 1; i <= numrets; i++) {
+        auto retType = dbrettype(dbproc, i);
+        std::string returnName(dbretname(dbproc, i));
+        TypeValue it;
+
+        BYTE *returnDataPtr = dbretdata(dbproc, i);
+
+        switch (retType) {
+          case SYBINT1: {
+            it = *(reinterpret_cast<int8_t *>(returnDataPtr));
+            break;
+          }
+
+          case SYBINT2: {
+            it = *(reinterpret_cast<int16_t *>(returnDataPtr));
+            break;
+          }
+
+          case SYBINT4: {
+            it = *(reinterpret_cast<int32_t *>(returnDataPtr));
+            break;
+          }
+
+          case SYBINT8: {
+            it = *(reinterpret_cast<int64_t *>(returnDataPtr));
+            break;
+          }
+
+          case SYBFLT8: {
+            it = *(reinterpret_cast<double *>(returnDataPtr));
+            break;
+          }
+
+          case SYBVARCHAR: {
+            it = std::string(reinterpret_cast<char *>(returnDataPtr), dbretlen(dbproc, i));
+            break;
+          }
+
+          case SYBDATETIME: {
+            it = *(reinterpret_cast<const DBDATETIME *>(returnDataPtr));
+            break;
+          }
+        }
+
+        procResult.returnValues[returnName] = std::move(it);
+      }
+
+      procResult.procedureReturnValue = std::nullopt;
+
+      if (dbhasretstat(dbproc) == TRUE) {
+        procResult.procedureReturnValue = dbretstatus(dbproc);
+      }
+
+      return numrets;
+    }
+
     RETCODE addParameter(const Param &p) {
       DBINT maxLen = -1;
       DBINT dataLen = -1;
@@ -386,7 +421,8 @@ namespace MSSQLClient {
     }
 
     DBPROCESS *dbproc;
-  };  // namespace MSSQLClient
+    inline static std::atomic_uint32_t refCnt = 0;
+  };  // class Connnection
 }  // namespace MSSQLClient
 
 #endif
