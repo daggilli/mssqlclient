@@ -283,7 +283,7 @@ namespace MSSQLClient {
                   if (buf) {
                     switch (c.dataType()) {
                       case INTBIND: {
-                        it = *(reinterpret_cast<const int *>(buf));
+                        it = *(reinterpret_cast<const int32_t *>(buf));
                         break;
                       }
 
@@ -293,7 +293,7 @@ namespace MSSQLClient {
                       }
 
                       case SMALLBIND: {
-                        it = *(reinterpret_cast<const uint16_t *>(buf));
+                        it = *(reinterpret_cast<const int16_t *>(buf));
                         break;
                       }
 
@@ -314,6 +314,11 @@ namespace MSSQLClient {
 
                       case DATETIMEBIND: {
                         it = *(reinterpret_cast<const DBDATETIME *>(buf));
+                        break;
+                      }
+
+                      default: {
+                        it = std::nullopt;
                         break;
                       }
                     }
