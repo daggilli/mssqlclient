@@ -283,27 +283,27 @@ namespace MSSQLClient {
                   if (buf) {
                     switch (c.dataType()) {
                       case INTBIND: {
-                        it = *(reinterpret_cast<const int32_t *>(buf));
+                        it = getItemBuffer<int32_t>(buf);
                         break;
                       }
 
                       case TINYBIND: {
-                        it = static_cast<uint8_t>(buf[0] & 0xFF);
+                        it = getItemBuffer<uint8_t>(buf);
                         break;
                       }
 
                       case SMALLBIND: {
-                        it = *(reinterpret_cast<const int16_t *>(buf));
+                        it = getItemBuffer<int16_t>(buf);
                         break;
                       }
 
                       case REALBIND: {
-                        it = *(reinterpret_cast<const float *>(buf));
+                        it = getItemBuffer<float>(buf);
                         break;
                       }
 
                       case FLT8BIND: {
-                        it = *(reinterpret_cast<const double *>(buf));
+                        it = getItemBuffer<double>(buf);
                         break;
                       }
 
@@ -313,7 +313,7 @@ namespace MSSQLClient {
                       }
 
                       case DATETIMEBIND: {
-                        it = *(reinterpret_cast<const DBDATETIME *>(buf));
+                        it = getItemBuffer<DBDATETIME>(buf);
                         break;
                       }
                     }
@@ -357,27 +357,27 @@ namespace MSSQLClient {
 
         switch (retType) {
           case SYBINT1: {
-            it = *(reinterpret_cast<int8_t *>(returnDataPtr));
+            it = getItemBuffer<int8_t>(returnDataPtr);
             break;
           }
 
           case SYBINT2: {
-            it = *(reinterpret_cast<int16_t *>(returnDataPtr));
+            it = getItemBuffer<int16_t>(returnDataPtr);
             break;
           }
 
           case SYBINT4: {
-            it = *(reinterpret_cast<int32_t *>(returnDataPtr));
+            it = getItemBuffer<int32_t>(returnDataPtr);
             break;
           }
 
           case SYBINT8: {
-            it = *(reinterpret_cast<int64_t *>(returnDataPtr));
+            it = getItemBuffer<int64_t>(returnDataPtr);
             break;
           }
 
           case SYBFLT8: {
-            it = *(reinterpret_cast<double *>(returnDataPtr));
+            it = getItemBuffer<double>(returnDataPtr);
             break;
           }
 
@@ -387,7 +387,7 @@ namespace MSSQLClient {
           }
 
           case SYBDATETIME: {
-            it = *(reinterpret_cast<const DBDATETIME *>(returnDataPtr));
+            it = getItemBuffer<DBDATETIME>(returnDataPtr);
             break;
           }
         }
@@ -418,6 +418,21 @@ namespace MSSQLClient {
       }
       return dbrpcparam(dbproc, p.name.c_str(), static_cast<BYTE>(p.output ? DBRPCRETURN : 0), p.type, maxLen, dataLen,
                         p.valueBuffer);
+    }
+
+    template <typename T>
+    T getItemBuffer(const char *const buffer) {
+      return *(reinterpret_cast<const T *>(buffer));
+    }
+
+    template <typename T>
+    T getItemBuffer(BYTE *buffer) {
+      return *(reinterpret_cast<T *>(buffer));
+    }
+
+    template <uint8_t>
+    uint8_t getItemBuffer(const char *const buffer) {
+      return static_cast<uint8_t>(buffer[0] & 0xFF);
     }
 
     DBPROCESS *dbproc;

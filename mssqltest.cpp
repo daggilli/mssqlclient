@@ -163,7 +163,7 @@ std::uintmax_t loadFile(const char *const name, std::string &fileStr) {
   std::ifstream infile;
   infile.exceptions(std::ifstream::failbit | std::ifstream::badbit);
   try {
-    infile.open(filepath.c_str(), std::ios::in | std::ifstream::binary);
+    infile.open(filepath, std::ios::in | std::ifstream::binary);
   } catch (...) {
     std::throw_with_nested(std::runtime_error("Can't open input file " + filepath.string()));
   }
