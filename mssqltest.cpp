@@ -51,11 +51,9 @@ int main(int argc, char *argv[]) {
 
   result = connection.query(eventqstr);
 
-  DBDATEREC dateRecord;
-
   for (auto &r : result) {
-    dbdatecrack(nullptr, &dateRecord, const_cast<DBDATETIME *>(&(r[2].get<DBDATETIME>())));
-    std::cout << r[0].get<int>() << ": " << r[1].get<std::string>() << " | " << dateParse(dateRecord) << "\n";
+    std::cout << r[0].get<int>() << ": " << r[1].get<std::string>() << " | "
+              << MSSQLClient::datetimeString(r[2].get<DBDATETIME>()) << '\n';
   }
 
   const std::size_t PNBUFSIZE = 100;

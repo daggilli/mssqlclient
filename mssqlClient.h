@@ -127,6 +127,40 @@ namespace MSSQLClient {
   using MessageHandler = std::add_pointer<int(DBPROCESS *, DBINT, int, int, char *, char *, char *, int)>::type;
   using ErrorHandler = std::add_pointer<int(DBPROCESS *, int, int, int, char *, char *)>::type;
 
+  namespace {
+    template <typename T>
+    inline T const getItem(const char *const buffer) {
+      return *(reinterpret_cast<const T *>(buffer));
+    }
+
+    template <>
+    inline uint8_t const getItem(const char *const buffer) {
+      return static_cast<uint8_t>(buffer[0] & 0xFF);
+    }
+
+    template <>
+    inline std::string const getItem(const char *const buffer) {
+      return std::string(buffer);
+    }
+
+    template <typename T>
+    inline std::string const getItem(const char *const buffer, const std::size_t len) {
+      return std::string(buffer, len);
+    }
+  }  // namespace
+
+  inline std::string datetimeString(const DBDATETIME &dt) {
+    DBDATEREC dateRecord;
+    dbdatecrack(nullptr, &dateRecord, const_cast<DBDATETIME *>(&dt));
+    std::ostringstream dateStr;
+
+    dateStr << dateRecord.dateyear << "-" << std::setw(2) << std::setfill('0') << dateRecord.datemonth + 1 << "-" << std::setw(2)
+            << std::setfill('0') << dateRecord.datedmonth << " " << dateRecord.datehour << ":" << std::setw(2)
+            << std::setfill('0') << dateRecord.dateminute << ":" << std::setw(2) << std::setfill('0') << dateRecord.datesecond;
+
+    return dateStr.str();
+  }
+
   class Connection {
    public:
     Connection() = delete;
@@ -283,37 +317,37 @@ namespace MSSQLClient {
                   if (buf) {
                     switch (c.dataType()) {
                       case INTBIND: {
-                        it = getItemBuffer<int32_t>(buf);
+                        it = getItem<int32_t>(buf);
                         break;
                       }
 
                       case TINYBIND: {
-                        it = getItemBuffer<uint8_t>(buf);
+                        it = getItem<uint8_t>(buf);
                         break;
                       }
 
                       case SMALLBIND: {
-                        it = getItemBuffer<int16_t>(buf);
+                        it = getItem<int16_t>(buf);
                         break;
                       }
 
                       case REALBIND: {
-                        it = getItemBuffer<float>(buf);
+                        it = getItem<float>(buf);
                         break;
                       }
 
                       case FLT8BIND: {
-                        it = getItemBuffer<double>(buf);
+                        it = getItem<double>(buf);
                         break;
                       }
 
                       case NTBSTRINGBIND: {
-                        it = std::string(buf);
+                        it = getItem<std::string>(buf);
                         break;
                       }
 
                       case DATETIMEBIND: {
-                        it = getItemBuffer<DBDATETIME>(buf);
+                        it = getItem<DBDATETIME>(buf);
                         break;
                       }
                     }
@@ -353,41 +387,41 @@ namespace MSSQLClient {
         std::string returnName(dbretname(dbproc, i));
         TypeValue it;
 
-        BYTE *returnDataPtr = dbretdata(dbproc, i);
+        const char *const returnDataPtr = reinterpret_cast<const char *>(dbretdata(dbproc, i));
 
         switch (retType) {
           case SYBINT1: {
-            it = getItemBuffer<int8_t>(returnDataPtr);
+            it = getItem<int8_t>(returnDataPtr);
             break;
           }
 
           case SYBINT2: {
-            it = getItemBuffer<int16_t>(returnDataPtr);
+            it = getItem<int16_t>(returnDataPtr);
             break;
           }
 
           case SYBINT4: {
-            it = getItemBuffer<int32_t>(returnDataPtr);
+            it = getItem<int32_t>(returnDataPtr);
             break;
           }
 
           case SYBINT8: {
-            it = getItemBuffer<int64_t>(returnDataPtr);
+            it = getItem<int64_t>(returnDataPtr);
             break;
           }
 
           case SYBFLT8: {
-            it = getItemBuffer<double>(returnDataPtr);
+            it = getItem<double>(returnDataPtr);
             break;
           }
 
           case SYBVARCHAR: {
-            it = std::string(reinterpret_cast<char *>(returnDataPtr), dbretlen(dbproc, i));
+            it = getItem<std::string>(returnDataPtr, dbretlen(dbproc, i));
             break;
           }
 
           case SYBDATETIME: {
-            it = getItemBuffer<DBDATETIME>(returnDataPtr);
+            it = getItem<DBDATETIME>(returnDataPtr);
             break;
           }
         }
@@ -418,21 +452,6 @@ namespace MSSQLClient {
       }
       return dbrpcparam(dbproc, p.name.c_str(), static_cast<BYTE>(p.output ? DBRPCRETURN : 0), p.type, maxLen, dataLen,
                         p.valueBuffer);
-    }
-
-    template <typename T>
-    T getItemBuffer(const char *const buffer) {
-      return *(reinterpret_cast<const T *>(buffer));
-    }
-
-    template <typename T>
-    T getItemBuffer(BYTE *buffer) {
-      return *(reinterpret_cast<T *>(buffer));
-    }
-
-    template <uint8_t>
-    uint8_t getItemBuffer(const char *const buffer) {
-      return static_cast<uint8_t>(buffer[0] & 0xFF);
     }
 
     DBPROCESS *dbproc;
