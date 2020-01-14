@@ -1,5 +1,6 @@
 #ifndef __MSSQLCLIENT_H__
 #define __MSSQLCLIENT_H__
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
@@ -30,8 +31,12 @@ namespace MSSQLClient {
     std::string database;
   };
 
+  constexpr std::size_t NUMERICSIZE = sizeof(DBNUMERIC);
+  constexpr std::size_t NUMERICBYTESSTART = 2;
+  constexpr std::size_t NUMERICBYTESEND = 17 + 2;
+
   using TypeValue = std::variant<int8_t, int16_t, int32_t, int64_t, uint8_t, uint16_t, uint32_t, uint64_t, float, double,
-                                 std::string, DBDATETIME>;
+                                 std::string, DBDATETIME, DBMONEY, DBNUMERIC>;
   using ItemValue = std::optional<TypeValue>;
 
   class Item {
@@ -70,16 +75,14 @@ namespace MSSQLClient {
   };
 
   namespace {
-    const std::unordered_map<int, int> typeMap = {
-        {SYBINT4, INTBIND}, {SYBCHAR, NTBSTRINGBIND}, {SYBDATETIME, DATETIMEBIND}, {SYBFLT8, FLT8BIND}};
+    const std::unordered_map<int, int> typeMap = {{SYBINT4, INTBIND},  {SYBCHAR, NTBSTRINGBIND}, {SYBDATETIME, DATETIMEBIND},
+                                                  {SYBFLT8, FLT8BIND}, {SYBMONEY, MONEYBIND},    {SYBNUMERIC, NUMERICBIND}};
   }
 
   class Column {
    public:
     Column(DBPROCESS *dbproc, const int col, const int colType)
         : nm(dbcolname(dbproc, col)), tp(dbcoltype(dbproc, col)), dtp(colType), sz(dbcollen(dbproc, col)) {
-      buf = std::make_unique<char[]>(sz + 1);
-
       if (dtp == -1) {
         auto mappedType = typeMap.find(tp);
         if (mappedType == typeMap.end()) {
@@ -87,6 +90,12 @@ namespace MSSQLClient {
         }
         dtp = mappedType->second;
       }
+
+      if (dtp == NUMERICBIND || dtp == DECIMALBIND) {
+        sz = NUMERICSIZE;
+      }
+
+      buf = std::make_unique<char[]>(sz + 1);
 
       if (dbbind(dbproc, col, dtp, sz + 1, reinterpret_cast<BYTE *>(buf.get())) == FAIL) {
         throw(std::runtime_error("dbbind() failed"));
@@ -143,6 +152,13 @@ namespace MSSQLClient {
       return std::string(buffer);
     }
 
+    template <>
+    inline DBNUMERIC const getItem(const char *const buffer) {
+      DBNUMERIC numer = {static_cast<uint8_t>(buffer[0]), static_cast<uint8_t>(buffer[1])};
+      std::copy(buffer + NUMERICBYTESSTART, buffer + NUMERICBYTESEND, numer.array);
+      return numer;
+    }
+
     template <typename T>
     inline std::string const getItem(const char *const buffer, const std::size_t len) {
       return std::string(buffer, len);
@@ -169,6 +185,10 @@ namespace MSSQLClient {
       try {
         if (!refCnt++ && dbinit() == FAIL) {
           throw(std::runtime_error("dbinit() failed'"));
+        }
+
+        if (dbsetversion(DBVERSION_100) == FAIL) {
+          throw(std::runtime_error("dbsetversion() failed'"));
         }
 
         if (errHandler != nullptr) {
@@ -216,7 +236,7 @@ namespace MSSQLClient {
 
     RecordSet query(const char *queryString, const std::vector<int> &expectedTypes = {}) {
       try {
-        if (dbproc == nullptr && DBISAVAIL(dbproc)) {
+        if (dbproc == nullptr) {
           throw(std::runtime_error("Datanase process invalid"));
         }
 
@@ -270,6 +290,66 @@ namespace MSSQLClient {
         dbclose(dbproc);
         dbproc = nullptr;
       }
+    }
+
+    RETCODE cancel() {
+      RETCODE returnCode = SUCCEED;
+      try {
+        if (dbproc == nullptr) {
+          throw(std::runtime_error("Datanase process invalid"));
+        }
+
+        returnCode = dbcancel(dbproc);
+      } catch (...) {
+        std::throw_with_nested(std::runtime_error("procedure() failed"));
+      }
+
+      return returnCode;
+    }
+
+    RETCODE cancelQuery() {
+      RETCODE returnCode = SUCCEED;
+      try {
+        if (dbproc == nullptr) {
+          throw(std::runtime_error("Datanase process invalid"));
+        }
+
+        returnCode = dbcanquery(dbproc);
+      } catch (...) {
+        std::throw_with_nested(std::runtime_error("procedure() failed"));
+      }
+
+      return returnCode;
+    }
+
+    RETCODE setOption(const int option, char *const param = nullptr, const int paramLen = -1) {
+      RETCODE returnCode = SUCCEED;
+      try {
+        if (dbproc == nullptr) {
+          throw(std::runtime_error("Datanase process invalid"));
+        }
+
+        returnCode = dbsetopt(dbproc, option, param, paramLen);
+      } catch (...) {
+        std::throw_with_nested(std::runtime_error("procedure() failed"));
+      }
+
+      return returnCode;
+    }
+
+    RETCODE clearOption(const int option, char *const param = nullptr) {
+      RETCODE returnCode = SUCCEED;
+      try {
+        if (dbproc == nullptr) {
+          throw(std::runtime_error("Datanase process invalid"));
+        }
+
+        returnCode = dbclropt(dbproc, option, param);
+      } catch (...) {
+        std::throw_with_nested(std::runtime_error("procedure() failed"));
+      }
+
+      return returnCode;
     }
 
     static const uint32_t refCount() { return Connection::refCnt.load(); }
@@ -350,6 +430,16 @@ namespace MSSQLClient {
                         it = getItem<DBDATETIME>(buf);
                         break;
                       }
+
+                      case MONEYBIND: {
+                        it = getItem<DBMONEY>(buf);
+                        break;
+                      }
+
+                      case NUMERICBIND: {
+                        it = getItem<DBNUMERIC>(buf);
+                        break;
+                      }
                     }
                   }
                   row.emplace_back(c.type(), it);
@@ -424,6 +514,16 @@ namespace MSSQLClient {
             it = getItem<DBDATETIME>(returnDataPtr);
             break;
           }
+
+          case SYBMONEY: {
+            it = getItem<DBMONEY>(returnDataPtr);
+            break;
+          }
+
+          case SYBNUMERIC: {
+            it = getItem<DBNUMERIC>(returnDataPtr);
+            break;
+          }
         }
 
         procResult.returnValues[returnName] = std::move(it);
@@ -456,7 +556,7 @@ namespace MSSQLClient {
 
     DBPROCESS *dbproc;
     inline static std::atomic_uint32_t refCnt = 0;
-  };  // class Connnection
+  };  // namespace MSSQLClient
 }  // namespace MSSQLClient
 
 #endif

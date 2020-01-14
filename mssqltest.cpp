@@ -41,7 +41,10 @@ int main(int argc, char *argv[]) {
 
   MSSQLClient::Connection connection(getDatabaseConfiguration("./dbconfig.json"), msgHandler, errHandler);
 
-  MSSQLClient::RecordSet result = connection.query(testqstr);
+  MSSQLClient::RecordSet result;
+
+#if 0
+  result = connection.query(testqstr);
 
   std::cout << "ROWS " << result.size() << '\n';
 
@@ -95,6 +98,22 @@ int main(int argc, char *argv[]) {
 
   if (procResult.procedureReturnValue.has_value()) {
     std::cout << "Procedure returned " << procResult.procedureReturnValue.value() << '\n';
+  }
+#endif
+
+  result = connection.query("SELECT Value FROM Numerics;");
+
+  std::cout << "ROWS " << result.size() << '\n';
+
+  for (auto &r : result) {
+    auto numer = r[0].get<DBNUMERIC>();
+    std::cout << std::dec << static_cast<int>(numer.precision) << '\n';
+    std::cout << std::dec << static_cast<int>(numer.scale) << '\n';
+    auto cp = reinterpret_cast<uint8_t *>(&numer);
+    for (std::size_t i = 0; i < 35; i++) {
+      std::cout << std::hex << std::setw(2) << std::setfill('0') << static_cast<uint16_t>(cp[i] & 0xFF) << " ";
+    }
+    std::cout << '\n';
   }
 
   return 0;
