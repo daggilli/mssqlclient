@@ -33,7 +33,7 @@ namespace MSSQLClient {
 
   constexpr std::size_t NUMERICSIZE = sizeof(DBNUMERIC);
   constexpr std::size_t NUMERICBYTESSTART = 2;
-  constexpr std::size_t NUMERICBYTESEND = 17 + 2;
+  constexpr std::size_t NUMERICBYTESEND = 17 + NUMERICBYTESSTART;
 
   using TypeValue = std::variant<int8_t, int16_t, int32_t, int64_t, uint8_t, uint16_t, uint32_t, uint64_t, float, double,
                                  std::string, DBDATETIME, DBMONEY, DBNUMERIC>;
