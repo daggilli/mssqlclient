@@ -35,14 +35,29 @@ namespace MSSQLClient {
   constexpr std::size_t NUMERICBYTESSTART = 2;
   constexpr std::size_t NUMERICBYTESEND = 17 + NUMERICBYTESSTART;
 
-  using TypeValue = std::variant<int8_t, int16_t, int32_t, int64_t, uint8_t, uint16_t, uint32_t, uint64_t, float, double,
-                                 std::string, DBDATETIME, DBMONEY, DBNUMERIC>;
+  using TypeValue = std::variant<int8_t, int16_t, int32_t, int64_t, uint8_t, uint16_t, uint32_t, uint64_t, bool, float, double,
+                                 std::string, DBDATETIME, DBMONEY, DBNUMERIC, DBVARYBIN>;
   using ItemValue = std::optional<TypeValue>;
 
   class Item {
    public:
     Item(const int type, const ItemValue &value) : tp(type), val(value) {}
-    const bool isNull() { return val.has_value(); }
+    Item(const Item &other) : tp(other.tp), val(other.val) {}
+    Item(Item &&other) : tp(std::exchange(other.tp, 0)), val(std::move(other.val)) {}
+    Item &operator=(const Item &other) {
+      tp = other.tp;
+      val = other.val;
+
+      return *this;
+    }
+    Item &operator=(Item &&other) {
+      if (this != &other) {
+        tp = std::exchange(other.tp, 0);
+        val = std::move(other.val);
+      }
+      return *this;
+    }
+    const bool isNull() const { return !val.has_value(); }
     const TypeValue &value() const { return val.value(); }
     template <typename T>
     const T &get() const {
@@ -75,8 +90,10 @@ namespace MSSQLClient {
   };
 
   namespace {
-    const std::unordered_map<int, int> typeMap = {{SYBINT4, INTBIND},  {SYBCHAR, NTBSTRINGBIND}, {SYBDATETIME, DATETIMEBIND},
-                                                  {SYBFLT8, FLT8BIND}, {SYBMONEY, MONEYBIND},    {SYBNUMERIC, NUMERICBIND}};
+    const std::unordered_map<int, int> typeMap = {{SYBINT4, INTBIND},    {SYBINT1, TINYBIND},       {SYBINT2, SMALLBIND},
+                                                  {SYBINT8, BIGINTBIND}, {SYBBIT, BITBIND},         {SYBREAL, REALBIND},
+                                                  {SYBFLT8, FLT8BIND},   {SYBCHAR, NTBSTRINGBIND},  {SYBDATETIME, DATETIMEBIND},
+                                                  {SYBMONEY, MONEYBIND}, {SYBNUMERIC, NUMERICBIND}, {SYBBINARY, BINARYBIND}};
   }
 
   class Column {
@@ -138,30 +155,38 @@ namespace MSSQLClient {
 
   namespace {
     template <typename T>
-    inline T const getItem(const char *const buffer) {
+    inline T const getItem(const char *const buffer, const std::size_t len = 0) {
       return *(reinterpret_cast<const T *>(buffer));
     }
 
     template <>
-    inline uint8_t const getItem(const char *const buffer) {
+    inline uint8_t const getItem(const char *const buffer, const std::size_t len) {
       return static_cast<uint8_t>(buffer[0] & 0xFF);
     }
 
     template <>
-    inline std::string const getItem(const char *const buffer) {
+    inline bool const getItem(const char *const buffer, const std::size_t len) {
+      return static_cast<bool>(buffer[0] & 0xFF);
+    }
+
+    template <>
+    inline std::string const getItem(const char *const buffer, const std::size_t len) {
+      if (len) return std::string(buffer, len);
       return std::string(buffer);
     }
 
     template <>
-    inline DBNUMERIC const getItem(const char *const buffer) {
+    inline DBNUMERIC const getItem(const char *const buffer, const std::size_t len) {
       DBNUMERIC numer = {static_cast<uint8_t>(buffer[0]), static_cast<uint8_t>(buffer[1])};
       std::copy(buffer + NUMERICBYTESSTART, buffer + NUMERICBYTESEND, numer.array);
       return numer;
     }
 
-    template <typename T>
-    inline std::string const getItem(const char *const buffer, const std::size_t len) {
-      return std::string(buffer, len);
+    template <>
+    inline DBVARYBIN const getItem(const char *const buffer, const std::size_t len) {
+      DBVARYBIN varybin = {static_cast<int16_t>(len)};
+      std::copy(buffer, buffer + len, varybin.array);
+      return varybin;
     }
   }  // namespace
 
@@ -179,25 +204,26 @@ namespace MSSQLClient {
 
   class Connection {
    public:
-    Connection() = delete;
+    Connection() : dbproc(nullptr) { init(); }
     Connection(const DatabaseConfig &config, MessageHandler msgHandler = nullptr, ErrorHandler errHandler = nullptr)
         : dbproc(nullptr) {
       try {
-        if (!refCnt++ && dbinit() == FAIL) {
-          throw(std::runtime_error("dbinit() failed'"));
-        }
+        init();
+        installHandlers(msgHandler, errHandler);
+        connect(config);
+      } catch (...) {
+        std::throw_with_nested(std::runtime_error("Connection constrcutor failed"));
+      }
+    }
+    Connection(const Connection &conn) = delete;
+    ~Connection() {
+      close();
+      if (!--refCnt) dbexit();
+    }
 
-        if (dbsetversion(DBVERSION_100) == FAIL) {
-          throw(std::runtime_error("dbsetversion() failed'"));
-        }
-
-        if (errHandler != nullptr) {
-          dberrhandle(errHandler);
-        }
-        if (msgHandler != nullptr) {
-          dbmsghandle(msgHandler);
-        }
-
+    void connect(const DatabaseConfig &config) {
+      if (dbproc != nullptr) return;
+      try {
         std::unique_ptr<LOGINREC, std::function<void(LOGINREC *)>> login(dblogin(), [](LOGINREC *login) {
           if (login != nullptr) {
             dbloginfree(login);
@@ -224,11 +250,6 @@ namespace MSSQLClient {
         std::throw_with_nested(std::runtime_error("Connection constrcutor failed"));
       }
     }
-    Connection(const Connection &conn) = delete;
-    ~Connection() {
-      close();
-      if (!--refCnt) dbexit();
-    }
 
     RecordSet query(const std::string &queryString, const std::vector<int> &expectedTypes = {}) {
       return query(queryString.c_str(), expectedTypes);
@@ -236,9 +257,7 @@ namespace MSSQLClient {
 
     RecordSet query(const char *queryString, const std::vector<int> &expectedTypes = {}) {
       try {
-        if (dbproc == nullptr) {
-          throw(std::runtime_error("Datanase process invalid"));
-        }
+        dbcheck();
 
         if (dbcmd(dbproc, queryString) == FAIL) {
           throw(std::runtime_error("dbcmd() failed"));
@@ -257,6 +276,8 @@ namespace MSSQLClient {
     ProcedureResult procedure(const std::string &procedureName, const ParameterList &params,
                               const std::vector<int> &expectedTypes = {}) {
       try {
+        dbcheck();
+
         if (dbrpcinit(dbproc, "TestProcedure", static_cast<DBSMALLINT>(0)) == FAIL) {
           throw(std::runtime_error("dbprcinit() failed"));
         }
@@ -295,9 +316,7 @@ namespace MSSQLClient {
     RETCODE cancel() {
       RETCODE returnCode = SUCCEED;
       try {
-        if (dbproc == nullptr) {
-          throw(std::runtime_error("Datanase process invalid"));
-        }
+        dbcheck();
 
         returnCode = dbcancel(dbproc);
       } catch (...) {
@@ -310,9 +329,7 @@ namespace MSSQLClient {
     RETCODE cancelQuery() {
       RETCODE returnCode = SUCCEED;
       try {
-        if (dbproc == nullptr) {
-          throw(std::runtime_error("Datanase process invalid"));
-        }
+        dbcheck();
 
         returnCode = dbcanquery(dbproc);
       } catch (...) {
@@ -325,9 +342,7 @@ namespace MSSQLClient {
     RETCODE setOption(const int option, char *const param = nullptr, const int paramLen = -1) {
       RETCODE returnCode = SUCCEED;
       try {
-        if (dbproc == nullptr) {
-          throw(std::runtime_error("Datanase process invalid"));
-        }
+        dbcheck();
 
         returnCode = dbsetopt(dbproc, option, param, paramLen);
       } catch (...) {
@@ -340,9 +355,7 @@ namespace MSSQLClient {
     RETCODE clearOption(const int option, char *const param = nullptr) {
       RETCODE returnCode = SUCCEED;
       try {
-        if (dbproc == nullptr) {
-          throw(std::runtime_error("Datanase process invalid"));
-        }
+        dbcheck();
 
         returnCode = dbclropt(dbproc, option, param);
       } catch (...) {
@@ -352,9 +365,32 @@ namespace MSSQLClient {
       return returnCode;
     }
 
+    void installHandlers(MessageHandler msgHandler = nullptr, ErrorHandler errHandler = nullptr) {
+      if (msgHandler != nullptr) {
+        dbmsghandle(msgHandler);
+      }
+      if (errHandler != nullptr) {
+        dberrhandle(errHandler);
+      }
+    }
+
     static const uint32_t refCount() { return Connection::refCnt.load(); }
 
    private:
+    void init() {
+      if (!refCnt++) {
+        if (dbinit() == FAIL) {
+          throw(std::runtime_error("dbinit() failed'"));
+        }
+
+        while (!std::atomic_flag_test_and_set_explicit(&versionSet, std::memory_order_acquire)) {
+          if (dbsetversion(DBVERSION_100) == FAIL) {
+            throw(std::runtime_error("dbsetversion() failed'"));
+          }
+        }
+      }
+    }
+
     RecordSet getResultRows(const std::vector<int> &expectedTypes) {
       try {
         RecordSet result;
@@ -406,8 +442,18 @@ namespace MSSQLClient {
                         break;
                       }
 
+                      case BITBIND: {
+                        it = getItem<bool>(buf);
+                        break;
+                      }
+
                       case SMALLBIND: {
                         it = getItem<int16_t>(buf);
+                        break;
+                      }
+
+                      case BIGINTBIND: {
+                        it = getItem<int64_t>(buf);
                         break;
                       }
 
@@ -440,6 +486,11 @@ namespace MSSQLClient {
                         it = getItem<DBNUMERIC>(buf);
                         break;
                       }
+
+                      case BINARYBIND: {
+                        it = getItem<DBVARYBIN>(buf, c.size());
+                        break;
+                      }
                     }
                   }
                   row.emplace_back(c.type(), it);
@@ -450,14 +501,11 @@ namespace MSSQLClient {
 
               case BUF_FULL: {
                 throw(std::runtime_error("BUF_FULL in dbnextrow()"));
+                break;
               }
 
               case FAIL: {
                 throw(std::runtime_error("dbresults() failed in dbnextrow()"));
-              }
-
-              default: {
-                std::cerr << "Ignore row code " << rowCode << '\n';
                 break;
               }
             }
@@ -500,11 +548,22 @@ namespace MSSQLClient {
             break;
           }
 
+          case SYBBIT: {
+            it = getItem<bool>(returnDataPtr);
+            break;
+          }
+
+          case SYBREAL: {
+            it = getItem<float>(returnDataPtr);
+            break;
+          }
+
           case SYBFLT8: {
             it = getItem<double>(returnDataPtr);
             break;
           }
 
+          case SYBCHAR:
           case SYBVARCHAR: {
             it = getItem<std::string>(returnDataPtr, dbretlen(dbproc, i));
             break;
@@ -522,6 +581,11 @@ namespace MSSQLClient {
 
           case SYBNUMERIC: {
             it = getItem<DBNUMERIC>(returnDataPtr);
+            break;
+          }
+
+          case SYBBINARY: {
+            it = getItem<DBVARYBIN>(returnDataPtr, dbretlen(dbproc, i));
             break;
           }
         }
@@ -554,8 +618,15 @@ namespace MSSQLClient {
                         p.valueBuffer);
     }
 
+    void dbcheck() {
+      if (dbproc == nullptr || DBDEAD(dbproc)) {
+        throw(std::runtime_error("Datanase process invalid"));
+      }
+    }
+
     DBPROCESS *dbproc;
     inline static std::atomic_uint32_t refCnt = 0;
+    inline static std::atomic_flag versionSet = ATOMIC_FLAG_INIT;
   };  // namespace MSSQLClient
 }  // namespace MSSQLClient
 
